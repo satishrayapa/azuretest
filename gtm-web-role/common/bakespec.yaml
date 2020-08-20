@@ -30,6 +30,7 @@ phases:
       #Time-out values
       - export AWS_MAX_ATTEMPTS=400
       - export AWS_POLL_DELAY_SECONDS=10
+      - export SKIPREG='noo'
       #- export AWS_TIMEOUT_SECONDS=5400
       #- export PACKER_LOG=1
       
@@ -62,7 +63,6 @@ phases:
           AMI=$(yq read amis.yaml ${ENV_REGION}) ;
           yq write --inplace DeploySpec.yaml ${ENV}.DeployerParameters.Stack.Parameters.Ami ${AMI} ;
         done
-        SKIPREG="noo"
   files:
     - packer-artifact-manifest.json
     - amis.yaml
