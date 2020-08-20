@@ -62,8 +62,7 @@ phases:
           AMI=$(yq read amis.yaml ${ENV_REGION}) ;
           yq write --inplace DeploySpec.yaml ${ENV}.DeployerParameters.Stack.Parameters.Ami ${AMI} ;
         done
-
-artifacts:
+        SKIPREG="noo"
   files:
     - packer-artifact-manifest.json
     - amis.yaml
