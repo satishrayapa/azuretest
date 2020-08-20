@@ -1,0 +1,65 @@
+# Suggested stack name: a205822-ogt-dr-gtn-role-pipeline-dr-pipeline
+Description: A template that creates the Cumulus Pipeline
+Parameters:
+  ApplicationAssetInsightId:
+    Default: '205822'
+    Type: String
+  EnvironmentType:
+    Default: DR
+    Type: String
+  Name:
+    Default: a205822-ogt-dr-gtn-role-pipeline-dr
+    Type: String
+  PipelineInputBucket:
+    Default: a205822-ogt-artifacts-dr
+    Description: The name of the bucket that contains the source for the pipeline.
+      It is also used to store artifacts in between pipeline actions.
+    Type: String
+  PipelineInputKey:
+    Default: gtn/gtn-deploy-package.zip
+    Description: The place in the PipelineInputBucket where the source resides
+    Type: String
+  ResourceOwner:
+    Default: gcrt.devops@thomsonreuters.com
+    Type: String
+  ServiceName:
+    Default: ogt-gtn
+    Type: String
+Resources:
+  Pipeline:
+    Properties:
+      ArtifactStore:
+        Location: !Ref 'PipelineInputBucket'
+        Type: S3
+      Name: !Ref 'Name'
+      RoleArn: !Sub 'arn:aws:iam::${AWS::AccountId}:role/service-role/a${ApplicationAssetInsightId}-CICD-Deployment'
+      Stages:
+        - Actions:
+            - ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: S3
+                Version: '1'
+              Configuration:
+                PollForSourceChanges: false
+                S3Bucket: !Ref 'PipelineInputBucket'
+                S3ObjectKey: !Ref 'PipelineInputKey'
+              Name: Source
+              OutputArtifacts:
+                - Name: DeployInput
+          Name: Source
+        - Actions:
+            - ActionTypeId:
+                Category: Deploy
+                Owner: Custom
+                Provider: a205822-ogt-druswest2
+                Version: '1'
+              Configuration:
+                DeployStage: Deploy
+                Environment: prd
+              InputArtifacts:
+                - Name: DeployInput
+              Name: Deploy
+              RunOrder: 1
+          Name: Deploy_prd
+    Type: AWS::CodePipeline::Pipeline

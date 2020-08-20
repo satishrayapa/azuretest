@@ -1,0 +1,116 @@
+<powershell>
+
+$ErrorActionPreference = 'Stop'
+
+$Script:logPath = 'c:\bootstrap-bake.log'
+
+function LogToFile([string] $message, [string] $level) {
+    $date = Get-Date -UFormat '%Y-%m-%d %r'
+    Out-File -FilePath $logPath -InputObject "$date [$level] $message" -Append -ErrorAction Ignore
+}
+
+function LogInfo([string] $message) {
+    LogToFile $message 'INF'
+    Write-Information $message
+}
+
+function LogError([string] $message) {
+    LogToFile $message 'ERR'
+    Write-Error $message
+}
+
+try {
+    LogInfo 'AMI bootstrap script started'
+
+    LogInfo 'Importing AWSPowerShell'
+    Import-Module -Name AWSPowerShell -ErrorAction Stop
+
+    if (
+        -not (
+            [Environment]::OSVersion.Platform -eq 'Win32NT' -and
+            [Environment]::OSVersion.Version -ge '10.0' -and
+            $PSVersionTable.PSEdition -eq 'Desktop'
+        )
+    )
+    {
+        throw 'This script requires Windows Server 2016 or later.'
+    }
+
+    LogInfo 'Importing NetSecurity'
+    Import-Module -Name NetSecurity, PKI
+
+    # Reset WinRM configuration
+    LogInfo 'Enabling PSRemoting'
+    Disable-PSRemoting -Force -WarningAction Ignore
+    Invoke-WSManAction -Action Restore -ResourceURI 'winrm/config' | Out-Null
+    Set-Service -Name WinRM -StartupType Automatic
+    Enable-PSRemoting -Force -SkipNetworkProfileCheck -WarningAction Ignore
+
+    # Configure NTLM
+    Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name 'LocalAccountTokenFilterPolicy' -Value 1 -Type DWord -Force
+    Set-Item -Path 'WSMan:\localhost\Service\Auth\Negotiate' -Value 'true' -Force
+
+    # Create self-signed certificate
+    LogInfo 'Creating self-signed certificate'
+    $certParams = @{
+        CertStoreLocation = 'Cert:\LocalMachine\My'
+        Subject = $env:COMPUTERNAME
+        FriendlyName = 'WinRM over HTTPS'
+        NotAfter = (Get-Date).AddYears(2)
+    }
+
+    Get-ChildItem -Path $certParams['CertStoreLocation'] -Force |
+    Where-Object -FilterScript {
+        $_.FriendlyName -eq $certParams['FriendlyName'] -or
+        $_.Subject -eq 'CN=packer'
+    } |
+    Remove-Item -Force
+
+    $cert = New-SelfSignedCertificate @certParams
+
+    # Create HTTPS listener
+    LogInfo 'Creating HTTPS listener'
+    $listenerParams = @{
+        ResourceURI = 'winrm/config/Listener'
+        SelectorSet = @{
+            Address = '*'
+            Transport = 'HTTPS'
+        }
+        ValueSet = @{
+            CertificateThumbprint = $cert.Thumbprint
+            Hostname = $env:COMPUTERNAME
+        }
+    }
+
+    New-WSManInstance @listenerParams | Out-Null
+
+    # Create firewall exception
+    LogInfo 'Creating firewall exception'
+    $fwRuleParams = @{
+        Name = 'WinRM-HTTPS-In-TCP'
+        DisplayName = 'WinRM over HTTPS'
+        Action = 'Allow'
+        Direction = 'Inbound'
+        Enabled = 'True'
+        LocalPort = '5986'
+        Protocol = 'Tcp'
+        Profile = 'Any'
+    }
+
+    Get-NetFirewallRule -All |
+    Where-Object -FilterScript {$_.Name -eq $fwRuleParams['Name']} |
+    Remove-NetFirewallRule
+
+    New-NetFirewallRule @fwRuleParams | Out-Null
+
+    # Restart WinRM
+    LogInfo 'Restarting WinRM service'
+    Restart-Service -Name WinRM -Force
+
+    LogInfo 'AMI bootstrap script completed'
+}
+catch {
+    LogError $_.Exception.Message
+}
+
+</powershell>

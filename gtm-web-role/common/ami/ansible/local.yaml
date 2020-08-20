@@ -1,0 +1,49 @@
+# local.yml
+---
+- hosts: 127.0.0.1
+  # 'Become' the 'become_user', which is 'root' by default.
+  become: true
+  connection: local
+  pre_tasks:
+    - name: Install basic software
+      yum:
+        name: "java-1.8.0-openjdk"
+        state: present
+  tasks:
+    - name: Ensure group springboot exists
+      group:
+        name: springboot
+        state: present
+    - name: Add the user springboot user to springboot group
+      user:
+        name: springboot
+        comment: springboot User
+        group: springboot
+    - name: Move service script to correct directory
+      command: mv /tmp/sampleApp /etc/init.d/sampleApp
+    - name: Update file permissions
+      file:
+        path: /etc/init.d/sampleApp
+        owner: root
+        group: root
+        mode: 0755
+    - name: Create App Directory
+      file:
+        path: /var/sampleApp
+        state: directory
+        owner: springboot
+        group: springboot
+        mode: 0755
+    - name: Move app jar to correct directory
+      command: mv /tmp/sampleApp.jar /var/sampleApp
+    - name: update file permissions
+      file:
+        path: /var/sampleApp/sampleApp.jar
+        owner: springboot
+        group: springboot
+        mode: 0755
+    - name: Ensure sampleApp is started and runs on startup.
+      service:
+        name: sampleApp
+        state: started
+        enabled: true

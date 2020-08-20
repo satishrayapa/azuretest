@@ -1,0 +1,294 @@
+# Suggested stack name: a205822-ogt-prod-gtn-role-pipeline-prod-pipeline
+Description: A template that creates the Cumulus Pipeline
+Parameters:
+  ApplicationAssetInsightId:
+    Default: '205822'
+    Type: String
+  BakeSpecPath:
+    Default: bakespec.yaml
+    Description: "\"Path to the CodeBuild buildspec file responsible for baking the\
+      \ AMI.\"\n"
+    Type: String
+  BakeSubnets:
+    AllowedValues:
+      - /a205257/cicd/tr-vpc-1-private-subnets
+    Default: /a205257/cicd/tr-vpc-1-private-subnets
+    Description: Name of SSM parameter that contains the private subnets of the TR
+      VPC
+    Type: AWS::SSM::Parameter::Value<List<String>>
+  BakeVpcId:
+    AllowedValues:
+      - /a205257/cicd/tr-vpc-1-id
+    Default: /a205257/cicd/tr-vpc-1-id
+    Description: Name of SSM parameter that contains the ID of the TR VPC
+    Type: AWS::SSM::Parameter::Value<String>
+  CustomBakeActionTimeout:
+    Default: '440'
+    Description: Bake action timeout in minutes
+    Type: String
+  EnvironmentType:
+    Default: PRODUCTION
+    Type: String
+  Name:
+    Default: a205822-ogt-prod-gtn-role-pipeline-prod
+    Type: String
+  PipelineInputBucket:
+    Default: a205822-ogt-artifacts-prod
+    Description: The name of the bucket that contains the source for the pipeline.
+      It is also used to store artifacts in between pipeline actions.
+    Type: String
+  PipelineInputKey:
+    Default: gtn/gtn-deploy-package.zip
+    Description: The place in the PipelineInputBucket where the source resides
+    Type: String
+  ResourceOwner:
+    Default: gcrt.devops@thomsonreuters.com
+    Type: String
+  ServiceName:
+    Default: ogt-gtn
+    Type: String
+Resources:
+  CloudWatchEvent:
+    Properties:
+      Description: !Sub 'Trigger start of the cumulus pipeline named ${Name}'
+      EventPattern:
+        detail:
+          eventName:
+            - PutObject
+            - CompleteMultipartUpload
+          eventSource:
+            - s3.amazonaws.com
+          resources:
+            ARN:
+              - !Sub 'arn:aws:s3:::${PipelineInputBucket}/${PipelineInputKey}'
+        detail-type:
+          - AWS API Call via CloudTrail
+        source:
+          - aws.s3
+      Name: !Sub '${Name}-pipeline-trigger'
+      State: ENABLED
+      Targets:
+        - Arn: !Sub 'arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${Name}'
+          Id: !Ref 'Name'
+          RoleArn: !GetAtt 'CloudWatchEventRole.Arn'
+    Type: AWS::Events::Rule
+  CloudWatchEventRole:
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - events.amazonaws.com
+      Path: /service-role/
+      PermissionsBoundary: !Sub 'arn:aws:iam::${AWS::AccountId}:policy/tr-permission-boundary'
+      Policies:
+        - PolicyDocument:
+            Statement:
+              - Action:
+                  - codepipeline:StartPipelineExecution
+                Effect: Allow
+                Resource: !Sub 'arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${Name}'
+            Version: '2012-10-17'
+          PolicyName: CodePipelineExecution
+    Type: AWS::IAM::Role
+  ImageBakeAction:
+    DependsOn: ImageBakeGroupIngressRule
+    Properties:
+      Artifacts:
+        Type: CODEPIPELINE
+      Description: The 'Bake' action in the 'Bake' stage of the CICD Pipeline components
+        document
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        EnvironmentVariables:
+          - Name: ASSET_ID
+            Value: !Ref 'ApplicationAssetInsightId'
+          - Name: ACCOUNT_ID
+            Value: !Ref 'AWS::AccountId'
+          - Name: REGION
+            Value: !Ref 'AWS::Region'
+          - Name: RESOURCE_OWNER
+            Value: !Ref 'ResourceOwner'
+          - Name: ENVIRONMENT_TYPE
+            Value: !Ref 'EnvironmentType'
+          - Name: SERVICE_NAME
+            Value: !Ref 'ServiceName'
+          - Name: PACKER_SECURITY_GROUP_ID
+            Value: !Ref 'ImageBakeGroup'
+          - Name: PACKER_VPC_ID
+            Value: !Ref 'BakeVpcId'
+          - Name: PACKER_SUBNET_ID
+            Value: !Select
+              - 0
+              - !Ref 'BakeSubnets'
+        Image: aws/codebuild/docker:18.09.0
+        Type: LINUX_CONTAINER
+      Name: !Sub 'a${ApplicationAssetInsightId}-ogt-prod-${ServiceName}-image-bake'
+      ServiceRole: !Sub 'arn:aws:iam::${AWS::AccountId}:role/service-role/a${ApplicationAssetInsightId}-CICD-Deployment'
+      Source:
+        BuildSpec: !Ref 'BakeSpecPath'
+        Type: CODEPIPELINE
+      Tags:
+        - Key: tr:application-asset-insight-id
+          Value: !Ref 'ApplicationAssetInsightId'
+        - Key: tr:environment-type
+          Value: !Ref 'EnvironmentType'
+        - Key: tr:resource-owner
+          Value: !Ref 'ResourceOwner'
+      TimeoutInMinutes: !Ref 'CustomBakeActionTimeout'
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref 'ImageBakeGroup'
+        Subnets:
+          - !Select
+            - 0
+            - !Ref 'BakeSubnets'
+        VpcId: !Ref 'BakeVpcId'
+    Type: AWS::CodeBuild::Project
+  ImageBakeGroup:
+    Properties:
+      GroupDescription: Security group that is applied to CodeBuild and Packer instances
+      SecurityGroupEgress:
+        - CidrIp: '0.0.0.0/0'
+          FromPort: -1
+          IpProtocol: -1
+          ToPort: -1
+      VpcId: !Ref 'BakeVpcId'
+    Type: AWS::EC2::SecurityGroup
+  ImageBakeGroupIngressRule:
+    Properties:
+      Description: Allows instances in image bake group to talk to eachother
+      FromPort: '-1'
+      GroupId: !Ref 'ImageBakeGroup'
+      IpProtocol: '-1'
+      SourceSecurityGroupId: !Ref 'ImageBakeGroup'
+      ToPort: '-1'
+    Type: AWS::EC2::SecurityGroupIngress
+  Pipeline:
+    Properties:
+      ArtifactStore:
+        Location: !Ref 'PipelineInputBucket'
+        Type: S3
+      Name: !Ref 'Name'
+      RoleArn: !Sub 'arn:aws:iam::${AWS::AccountId}:role/service-role/a${ApplicationAssetInsightId}-CICD-Deployment'
+      Stages:
+        - Actions:
+            - ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: S3
+                Version: '1'
+              Configuration:
+                PollForSourceChanges: false
+                S3Bucket: !Ref 'PipelineInputBucket'
+                S3ObjectKey: !Ref 'PipelineInputKey'
+              Name: Source
+              OutputArtifacts:
+                - Name: BakeInput
+          Name: Source
+        - Actions:
+            - ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                PrimarySource: Source
+                ProjectName: !Ref 'ImageBakeAction'
+              InputArtifacts:
+                - Name: BakeInput
+              Name: Bake
+              OutputArtifacts:
+                - Name: DeployInput
+              RunOrder: 1
+          Name: Bake
+        - Actions:
+            - ActionTypeId:
+                Category: Deploy
+                Owner: Custom
+                Provider: a205822-ogt-prod-Engine
+                Version: '1'
+              Configuration:
+                DeployStage: Deploy
+                Environment: reg
+              InputArtifacts:
+                - Name: DeployInput
+              Name: Deploy
+              RunOrder: 1
+          Name: Deploy_reg
+        - Actions:
+            - ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Provider: Manual
+                Version: '1'
+              Configuration:
+                CustomData: gtn-imp
+                NotificationArn: arn:aws:sns:us-east-1:918544005421:a205822-ogt-prod-bluegreen-resource-cleanup-topic
+              Name: Approval
+              RunOrder: 1
+            - ActionTypeId:
+                Category: Deploy
+                Owner: Custom
+                Provider: a205822-ogt-prod-Engine
+                Version: '1'
+              Configuration:
+                DeployStage: Deploy
+                Environment: imp
+              InputArtifacts:
+                - Name: DeployInput
+              Name: Deploy
+              RunOrder: 2
+          Name: Deploy_imp
+        - Actions:
+            - ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Provider: Manual
+                Version: '1'
+              Configuration:
+                CustomData: gtn-uat
+                NotificationArn: arn:aws:sns:us-east-1:918544005421:a205822-ogt-prod-bluegreen-resource-cleanup-topic
+              Name: Approval
+              RunOrder: 1
+            - ActionTypeId:
+                Category: Deploy
+                Owner: Custom
+                Provider: a205822-ogt-prod-Engine
+                Version: '1'
+              Configuration:
+                DeployStage: Deploy
+                Environment: uat
+              InputArtifacts:
+                - Name: DeployInput
+              Name: Deploy
+              RunOrder: 2
+          Name: Deploy_uat
+        - Actions:
+            - ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Provider: Manual
+                Version: '1'
+              Configuration:
+                CustomData: gtn-prd
+                NotificationArn: arn:aws:sns:us-east-1:918544005421:a205822-ogt-prod-bluegreen-resource-cleanup-topic
+              Name: Approval
+              RunOrder: 1
+            - ActionTypeId:
+                Category: Deploy
+                Owner: Custom
+                Provider: a205822-ogt-prod-Engine
+                Version: '1'
+              Configuration:
+                DeployStage: Deploy
+                Environment: prd
+              InputArtifacts:
+                - Name: DeployInput
+              Name: Deploy
+              RunOrder: 2
+          Name: Deploy_prd
+    Type: AWS::CodePipeline::Pipeline

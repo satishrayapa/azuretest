@@ -1,0 +1,213 @@
+---
+# This section defines common values across all environments.
+# Values written here can be overridden in the environment-specific sections below.
+Defaults:
+  # Mandatory.
+  # Parameters that determine what kind of deployment will happen.
+  DeployerType: blue_green_deployer
+  DeployerVersion: "1"
+
+  # Optional.
+  # Specifies the AIID of the account to deploy to.
+  # If unspecified, defaults to the AIID of the CICD account.
+  AssetId: 205822
+
+  # Mandatory.
+  # Determines the name of the service that is being deployed.
+  # Also determines the value of a TR tag.
+  # Does not necessarily need to match the ServiceName in the pipeline spec.
+  ServiceName: ogt-gtm-web
+
+  # Mandatory.
+  # Parameters for the BlueGreen deployment.
+  DeployerParameters:
+    Service:
+      EnvironmentType: ({tr.environment.type})
+      ResourceOwner: ({aws.resource.owner.prod})
+    # Mandatory.
+    # Defines the application stack that is deployed.
+    Stack:
+      # Mandatory.
+      # Determines which template to deploy the application with.
+      # Can contain either "Url", "Bucket"+"Key", or "Name"+"Version".
+      # Name+Version lets you specify built-in templates.
+      Template:
+        Name: ec2
+        Version: 1
+      # Optional, but usually mandatory.
+      # Determines the parameters to pass in to the stack.
+      Parameters:
+        AssetId: ({tr.asset.id.ogt})
+        OS: windows
+        InstanceType: t3.large
+        BootstrapS3Bucket: ({aws.s3.bucket.artifacts})
+        BootstrapScript: ({server.role})/ec2-bootstrap.ps1 # Sets OGT_LEGACY var
+        HealthCheckType: ELB  # Change to ELB when you have healthchecks working.
+        CreationPolicyTimeout: PT15M  # Remove or increase to > 10 PT10M when you have healthchecks working.
+        AsgHealthCheckGracePeriod: 900
+        #MinSuccessfulInstancesPercent: 0
+      Tags:
+        Name: a205822-ogt-gtm-web
+        ado:ReleaseName: ({Release.ReleaseName})
+        ado:ReleaseWebURL: ({Release.ReleaseWebURL})
+    # Mandatory.
+    # # Determines the type of routing that will happen.
+    # Routing:
+      # # Mandatory.
+      # # A string that can point testers to an endpoint to test.      
+      # TargetGroupRouter:
+        # TargetRulePriority: 600
+        # GreenRulePriority: 599
+        # Mandatory.
+        # Determines which stack to deploy the target group and listener rule with.
+    Notifications:
+      FailureSnsArn: ({aws.sns.arn.prod.failure})
+      # Mandatory.
+      TestingSnsArn: ({aws.sns.arn.prod.test})
+      # Mandatory.
+      #TestingSqsUrl: ({aws.sqs.url.prod.test})
+    # Determines how and when the deployment should be cleaned up.
+    Cleanup:
+      # Number of days to keep a deployment that has been denied.
+      DenyDeployment: 0
+      # Number of days to keep a deployment whose traffic shift failed.
+      FailedTrafficShift: 0
+      # Number of days to keep the deployment before this one if this one succeeds.
+      OldVersion: 0
+
+# This section defines values specific to a certain environment.
+# They override any values specified in the Defaults section.
+# The environments here should have the same name as specified in the pipelinespec file.
+reg:
+  # Mandatory. Determines which account to deploy to.
+  AccountId: "({aws.account.id})"
+  # Mandatory. Determines which region to deploy to.
+  AccountRegion: ({aws.region})
+  DeployerParameters:
+    Stack:
+      Parameters:
+        InstanceSecurityGroups: ({aws.ec2.security.groups.reg})
+        IamInstanceProfile: ({aws.ec2.instance.profile.arn})
+        KeyName: ({aws.ec2.instance.keyname})
+        # ContainerImageUri: "Filled in by BakeSpec"
+        # ClusterArn: "arn:aws:ecs:us-east-1:773476038677:cluster/a205930-eagan-demo-sample-application-ecs-dev-cluster"
+        # ContainerRole: "arn:aws:iam::773476038677:role/a205930-eagan-demo-ecs-service-project-ServiceRole-BHE1IHG6TNUC"
+        #  Ami: ami-067df7a660f93043a
+      Tags:
+        'tr:app-config-url': ({app.config.server.url})
+    Routing:
+      TestingEndpoint: "({aws.alb.healtchcheck.endpoint.reg})"                                                                                                                          
+      TargetGroupRouter:
+        TargetRulePriority: 400
+        GreenRulePriority: 399
+        ListenerARN: ({aws.alb.listener.internal.arn.reg})
+        Stack:
+          Template:
+            #Name: target-group
+            #Version: 1
+            Bucket: ({aws.s3.bucket.cumulus})
+            Key: ogt-prod-deployer/BlueGreenDeployer/target-group/v2.yaml
+          Parameters:
+            HostHeader: ({aws.alb.domain.name.reg})
+            HealthCheckPath: /healthcheck/quick
+            TargetGroupSlowStart: 600
+imp:
+  # Mandatory. Determines which account to deploy to.
+  AccountId: "({aws.account.id.prod})"
+  # Mandatory. Determines which region to deploy to.
+  AccountRegion: ({aws.region})
+  DeployerParameters:
+    Stack:
+      Parameters:
+        InstanceSecurityGroups: ({aws.ec2.security.groups.imp})
+        IamInstanceProfile: ({aws.ec2.instance.profile.arn.prod})
+        KeyName: ({aws.ec2.instance.keyname.prod})
+        # ContainerImageUri: "Filled in by BakeSpec"
+        # ClusterArn: "arn:aws:ecs:us-east-1:773476038677:cluster/a205930-eagan-demo-sample-application-ecs-dev-cluster"
+        # ContainerRole: "arn:aws:iam::773476038677:role/a205930-eagan-demo-ecs-service-project-ServiceRole-BHE1IHG6TNUC"
+        #  Ami: ami-067df7a660f93043a
+      Tags:
+        'tr:app-config-url': ({app.config.server.url.prod})
+    Routing:
+      TestingEndpoint: "({aws.alb.healtchcheck.endpoint.imp})"                                                                                                                          
+      TargetGroupRouter:
+        TargetRulePriority: 500
+        GreenRulePriority: 499
+        ListenerARN: ({aws.alb.listener.internal.arn.imp})
+        Stack:
+          Template:
+            #Name: target-group
+            #Version: 1
+            Bucket: ({aws.s3.bucket.cumulus})
+            Key: ogt-prod-deployer/BlueGreenDeployer/target-group/v2.yaml
+          Parameters:
+            HostHeader: ({aws.alb.domain.name.imp})
+            HealthCheckPath: /healthcheck/quick
+            TargetGroupSlowStart: 600
+uat:
+  # Mandatory. Determines which account to deploy to.
+  AccountId: "({aws.account.id.prod})"
+  # Mandatory. Determines which region to deploy to.
+  AccountRegion: ({aws.region})
+  DeployerParameters:
+    Stack:
+      Parameters:
+        InstanceSecurityGroups: ({aws.ec2.security.groups.uat})
+        IamInstanceProfile: ({aws.ec2.instance.profile.arn.prod})
+        KeyName: ({aws.ec2.instance.keyname.prod})
+        # ContainerImageUri: "Filled in by BakeSpec"
+        # ClusterArn: "arn:aws:ecs:us-east-1:773476038677:cluster/a205930-eagan-demo-sample-application-ecs-dev-cluster"
+        # ContainerRole: "arn:aws:iam::773476038677:role/a205930-eagan-demo-ecs-service-project-ServiceRole-BHE1IHG6TNUC"
+        #  Ami: ami-067df7a660f93043a
+      Tags:
+        'tr:app-config-url': ({app.config.server.url.prod})
+    Routing:
+      TestingEndpoint: "({aws.alb.healtchcheck.endpoint.uat})"                                                                                                                          
+      TargetGroupRouter:
+        TargetRulePriority: 400
+        GreenRulePriority: 399
+        ListenerARN: ({aws.alb.listener.internal.arn.uat})
+        Stack:
+          Template:
+            #Name: target-group
+            #Version: 1
+            Bucket: ({aws.s3.bucket.cumulus})
+            Key: ogt-prod-deployer/BlueGreenDeployer/target-group/v2.yaml
+          Parameters:
+            HostHeader: ({aws.alb.domain.name.uat})
+            HealthCheckPath: /healthcheck/quick
+            TargetGroupSlowStart: 600
+prd:
+  # Mandatory. Determines which account to deploy to.
+  AccountId: "({aws.account.id.prod})"
+  # Mandatory. Determines which region to deploy to.
+  AccountRegion: ({aws.region})
+  DeployerParameters:
+    Stack:
+      Parameters:
+        InstanceType: c5.xlarge
+        InstanceSecurityGroups: ({aws.ec2.security.groups.prod})
+        IamInstanceProfile: ({aws.ec2.instance.profile.arn.prod})
+        KeyName: ({aws.ec2.instance.keyname.prod})
+        # ContainerImageUri: "Filled in by BakeSpec"
+        # ClusterArn: "arn:aws:ecs:us-east-1:773476038677:cluster/a205930-eagan-demo-sample-application-ecs-dev-cluster"
+        # ContainerRole: "arn:aws:iam::773476038677:role/a205930-eagan-demo-ecs-service-project-ServiceRole-BHE1IHG6TNUC"
+        #  Ami: ami-067df7a660f93043a
+      Tags:
+        'tr:app-config-url': ({app.config.server.url.prod})
+    Routing:
+      TestingEndpoint: "({aws.alb.healtchcheck.endpoint.prod})"                                                                                                                          
+      TargetGroupRouter:
+        TargetRulePriority: 300
+        GreenRulePriority: 299
+        ListenerARN: ({aws.alb.listener.internal.arn.prod})
+        Stack:
+          Template:
+            #Name: target-group
+            #Version: 1
+            Bucket: ({aws.s3.bucket.cumulus})
+            Key: ogt-prod-deployer/BlueGreenDeployer/target-group/v2.yaml
+          Parameters:
+            HostHeader: ({aws.alb.domain.name.prod}),gtm.onesourcetax.com
+            HealthCheckPath: /healthcheck/quick
+            TargetGroupSlowStart: 600

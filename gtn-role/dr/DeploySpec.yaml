@@ -1,0 +1,109 @@
+---
+# This section defines common values across all environments.
+# Values written here can be overridden in the environment-specific sections below.
+Defaults:
+  # Mandatory.
+  # Parameters that determine what kind of deployment will happen.
+  DeployerType: blue_green_deployer
+  DeployerVersion: "1"
+
+  # Optional.
+  # Specifies the AIID of the account to deploy to.
+  # If unspecified, defaults to the AIID of the CICD account.
+  AssetId: ({tr.asset.id.ogt})
+
+  # Mandatory.
+  # Determines the name of the service that is being deployed.
+  # Also determines the value of a TR tag.
+  # Does not necessarily need to match the ServiceName in the pipeline spec.
+  ServiceName: ogt-gtn
+
+  # Mandatory.
+  # Parameters for the BlueGreen deployment.
+  DeployerParameters:
+    Service:
+      EnvironmentType: DR
+      ResourceOwner: ({aws.resource.owner.prod})
+    # Mandatory.
+    # Defines the application stack that is deployed.
+    Stack:
+      # Mandatory.
+      # Determines which template to deploy the application with.
+      # Can contain either "Url", "Bucket"+"Key", or "Name"+"Version".
+      # Name+Version lets you specify built-in templates.
+      Template:
+        Name: ec2
+        Version: 1
+      # Optional, but usually mandatory.
+      # Determines the parameters to pass in to the stack.
+      Parameters:
+        AssetId: ({tr.asset.id.ogt})
+        OS: windows
+        InstanceType: t3.medium
+        BootstrapS3Bucket: ({aws.s3.bucket.artifacts.dr})
+        BootstrapScript: gtn/ec2-bootstrap.ps1 # Sets OGT_LEGACY var
+        HealthCheckType: ELB  # Change to ELB when you have healthchecks working.
+        CreationPolicyTimeout: PT15M
+        AsgHealthCheckGracePeriod: 900
+        MinSuccessfulInstancesPercent: 0  # Remove when you have healthchecks working.
+      Tags:
+        Name: a205822-ogt-gtn
+    ## Mandatory.
+    # Determines the type of routing that will happen.
+    Routing:
+      # Mandatory.
+      # A string that can point testers to an endpoint to test.
+      TargetGroupRouter:
+        TargetRulePriority: 1000
+        GreenRulePriority: 999
+        # Mandatory.
+        # Determines which stack to deploy the target group and listener rule with.
+    Notifications:
+      FailureSnsArn: ({aws.sns.arn.dr.failure})
+      # Mandatory.
+      TestingSnsArn: ({aws.sns.arn.dr.test})
+      # Mandatory.
+      #TestingSqsUrl: https://sqs.us-east-1.amazonaws.com/627274622028/a205822-ogt-legacy-green-provisioning-dlq
+    # Determines how and when the deployment should be cleaned up.
+    Cleanup:
+      # Number of days to keep a deployment that has been denied.
+      DenyDeployment: 0
+      # Number of days to keep a deployment whose traffic shift failed.
+      FailedTrafficShift: 0
+      # Number of days to keep the deployment before this one if this one succeeds.
+      OldVersion: 0
+
+# This section defines values specific to a certain environment.
+# They override any values specified in the Defaults section.
+# The environments here should have the same name as specified in the pipelinespec file.
+prd:
+  # Mandatory. Determines which account to deploy to.
+  AccountId: "({aws.account.id})"
+  # Mandatory. Determines which region to deploy to.
+  AccountRegion: ({aws.region.dr})
+  DeployerParameters:
+    Stack:
+      Parameters:
+        InstanceSecurityGroups: ({aws.ec2.security.groups.dr})
+        IamInstanceProfile: ({aws.ec2.instance.profile.arn.dr})
+        KeyName: a205822-ogt-dr
+        Ami: ami-010688618170ad4d3
+        # ContainerImageUri: "Filled in by BakeSpec"
+        # ClusterArn: "arn:aws:ecs:us-east-1:773476038677:cluster/a205930-eagan-demo-sample-application-ecs-dev-cluster"
+        # ContainerRole: "arn:aws:iam::773476038677:role/a205930-eagan-demo-ecs-service-project-ServiceRole-BHE1IHG6TNUC"  
+      Tags:
+        'tr:app-config-url': ({app.config.server.url.dr})
+    Routing:
+      TestingEndpoint: "({aws.alb.healtchcheck.endpoint.dr})"
+      TargetGroupRouter:
+        ListenerARN: ({aws.alb.listener.internal.arn.dr})
+        Stack:
+          Template:
+            #Name: target-group
+            #Version: 1
+            Bucket: ({aws.s3.bucket.cumulus.dr})
+            Key: ogt-dr-deployer/BlueGreenDeployer/target-group/v2.yaml
+          Parameters:
+            HostHeader: ({aws.alb.domain.name.dr})
+            HealthCheckPath: /EventDBReader/EventReader.asmx/HealthCheck
+            TargetGroupSlowStart: 600

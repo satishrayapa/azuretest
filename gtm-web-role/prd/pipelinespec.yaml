@@ -1,0 +1,61 @@
+---
+# A pipeline spec for a build-bake-deploy pipeline.
+Pipeline:
+  Name: a205822-gtm-web-role-pipeline-prod
+  GroupName: ogt-prod
+  ApplicationAssetInsightId: '205822'
+  ResourceOwner: gcrt.devops@thomsonreuters.com
+  EnvironmentType: PRODUCTION
+  ServiceName: ogt-gtm-web
+  ## Service name will be taken as an input for pipeline naming convention. 
+Source:
+  Type: S3
+  Key: gtm-web/gtm-deploy-package.zip
+  Bucket: a205822-ogt-artifacts-prod
+Components:
+  # Build:
+    # Template:
+      # TemplatePath: ../combined-pipeline-rolling-ecs/custom_build.yaml
+      # TemplateName: CustomBuild
+
+    # # custom_build.yaml parameters
+    # # The folder in the source that contains buildspec.yml
+    # BuildComponentSpecFolderPath: pipeline-examples/combined-pipeline-rolling-ecs/
+    # CustomBuildActionTimeout: 10
+  Bake:
+    Template:
+      TemplatePath: ami_bake.yaml
+      TemplateName: CustomBake
+
+    # ami_bake.yaml parameters
+    BakeSpecPath: bakespec.yaml
+
+  Deploy:
+    - Environment: reg
+      Provider: a205822-ogt-prod-Engine
+      Version: 1
+      Approval:
+        Enabled: false
+        CustomData: "gtm-web-reg"
+        NotificationArn: arn:aws:sns:us-east-1:918544005421:a205822-ogt-prod-bluegreen-resource-cleanup-topic
+    - Environment: imp
+      Provider: a205822-ogt-prod-Engine
+      Version: 1
+      Approval:
+        Enabled: true
+        CustomData: "gtm-web-imp"
+        NotificationArn: arn:aws:sns:us-east-1:918544005421:a205822-ogt-prod-bluegreen-resource-cleanup-topic
+    - Environment: uat
+      Provider: a205822-ogt-prod-Engine
+      Version: 1
+      Approval:
+        Enabled: true
+        CustomData: "gtm-web-uat"
+        NotificationArn: arn:aws:sns:us-east-1:918544005421:a205822-ogt-prod-bluegreen-resource-cleanup-topic
+    - Environment: prd
+      Provider: a205822-ogt-prod-Engine
+      Version: 1
+      Approval:
+        Enabled: true
+        CustomData: "gtm-web-prd"
+        NotificationArn: arn:aws:sns:us-east-1:918544005421:a205822-ogt-prod-bluegreen-resource-cleanup-topic

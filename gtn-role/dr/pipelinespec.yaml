@@ -1,0 +1,19 @@
+---
+# A pipeline spec for a build-bake-deploy pipeline.
+Pipeline:
+  Name: a205822-gtn-role-pipeline-dr
+  GroupName: ogt-dr
+  ApplicationAssetInsightId: '205822'
+  ResourceOwner: gcrt.devops@thomsonreuters.com
+  EnvironmentType: DR
+  ServiceName: ogt-gtn
+  ## Service name will be taken as an input for pipeline naming convention. 
+Source:
+  Type: S3
+  Key: gtn/gtn-deploy-package.zip
+  Bucket: a205822-ogt-artifacts-dr
+Components:
+  Deploy:
+    - Environment: prd
+      Provider: a205822-ogt-druswest2
+      Version: 1

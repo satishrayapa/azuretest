@@ -1,0 +1,15 @@
+{
+      "source_ami": "{{env `PACKER_SOURCE_AMI`}}",
+      "region": "({aws.region})",
+      "vpc_id": "({aws.vpc.id})",
+      "tr_application_asset_insight_id": "({tr.asset.id.ogt})",
+      "tr_environment_type": "({tr.environment.type})",
+      "tr_resource_owner": "({aws.resource.owner})",
+      "tag_name": "a205822-Packer-Windows",
+      "packer_profile": "({aws.ec2.packer.profile})",
+      "security_group": "({aws.ami.security.group.packer})",
+      "nonprod_account": "({aws.account.id})",
+      "prod_account": "({aws.account.id.prod})",
+      "Release_ReleaseWebURL": "({Release.ReleaseWebURL})",
+      "Release_ReleaseName": "({Release.ReleaseName})"
+}

@@ -1,0 +1,64 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      docker: 18
+
+  pre_build:
+    commands:
+      # Install Packer.
+      - sed 's/\r$//' ami/scripts/install-packer.sh > ami/scripts/install-packer-unix.sh
+      - chmod +x ami/scripts/install-packer-unix.sh
+      - ami/scripts/install-packer-unix.sh
+      - mkdir -p ~/.ssh ~/.aws
+
+  build:
+    commands:
+      # Generate an AWS credentials file for Packer out of the CodeBuild container's credentials.
+      # The first 'sed' converts the JSON response to a "properties" file format
+      # The second 'sed' converts the keys to what the credentials file expects.
+      - >-
+        curl "169.254.170.2$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI" |
+        sed -e 's/^/\[default\]\n/' -e 's/,/\n/g' -e 's/[" \t}{]//g' -e 's/:/ = /g' |
+        sed -e 's/AccessKeyId/aws_access_key_id/' -e 's/SecretAccessKey/aws_secret_access_key/' -e 's/Token/aws_session_token/' > $HOME/.aws/credentials
+
+      # Get latest TR Golden AMI (Linux)
+      - export PACKER_SOURCE_AMI=$(aws ec2 describe-images --filters 'Name=name,Values=ip-full-base-windows-ami-*' --query 'Images[*].{id:ImageId, CreationDate:CreationDate}[] | sort_by(@, &CreationDate)[-1].id' --output text)
+      - echo $PACKER_SOURCE_AMI
+
+      # Build AMI with Packer
+      # Logs are also output to build.log so we can get the AMI ID out of them later.
+      - packer build -machine-readable -color=false -debug -var-file ami/packer-var.json ami/packer.json | tee build.log
+
+
+  post_build:
+    commands:
+      # Fail if Packer failed to produce an output - Packer doesn't `exit 1` on its own.
+      - test -s packer-artifact-manifest.json || exit 1
+
+      # Move Deployspec to root.
+      # - mv pipeline-examples/combined-pipeline-bluegreen-ami/DeploySpec.yaml ./
+
+      # Modify the DeploySpec.yaml file as necessary
+      # yq is run empty once to load the image (so layer downloads don't pollute the read)
+      # Another yq command gets the AMIS out of the manifest file and turns it into a YAML map of region->ami-id
+      # Finally, multiple yq commands populate the DeploySpec.yaml file with the correct AMI for that environment.
+      - >-
+        yq () { docker run --rm -v ${PWD}:/workdir mikefarah/yq:2.2.0 yq $@ ; } ;
+        yq >/dev/null ;
+        
+        yq read packer-artifact-manifest.json builds[0].artifact_id | tr "," "\n" | sed "s/\:/\: /" >amis.yaml ;
+        ENVS=$(yq read DeploySpec.yaml | grep -v '^ ' | grep -v 'Defaults' | sed 's/:.*$//') ;
+        for ENV in $ENVS ;
+        do
+          ENV_REGION=$(yq read DeploySpec.yaml ${ENV}.AccountRegion) ;
+          AMI=$(yq read amis.yaml ${ENV_REGION}) ;
+          yq write --inplace DeploySpec.yaml ${ENV}.DeployerParameters.Stack.Parameters.Ami ${AMI} ;
+        done
+
+artifacts:
+  files:
+    - packer-artifact-manifest.json
+    - amis.yaml
+    - DeploySpec.yaml
